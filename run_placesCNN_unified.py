@@ -15,6 +15,8 @@ import psycopg2
 import psycopg2.extras
 import postgis_functions
 import pois_storing_functions
+import get_map_points_to_search
+import logging_functions
 
 
 def load_labels():
@@ -120,108 +122,101 @@ def load_model():
     return model
 
 
-def get_photos_from_db():
-    #imgs = postgis_functions.connect_to_db()
-    conn = psycopg2.connect("dbname='pois' user='postgres' host='localhost' password='postgres'")
-    imgs = conn.cursor(cursor_factory = psycopg2.extras.RealDictCursor)
-    imgs.execute("SELECT id, placesid, head, panosid, year, month, lat, lng, geom, path  "
-                 "FROM gsv_ams_places "
-                 "ORDER BY placesid")
-    return imgs
+if __name__ == '__main__':
+    source = "gsv"
+    city = "ams"
+    # load the labels
+    classes, labels_IO, labels_attribute, W_attribute = load_labels()
+    # load the model/home/bill
+    features_blobs = []
+    model = load_model()
+    # load the transformer
+    tf = returnTF() # image transformer
+    # get the softmax weight
+    params = list(model.parameters())
+    weight_softmax = params[-2].data.numpy()
+    weight_softmax[weight_softmax<0] = 0
+    # Code has been EDITED from this point on
+    session, STable = pois_storing_functions.setup_db("gt_scene_features_ams_matched",
+                                                              "notused", "scene_features")
+    # GET images
+    logfile = "/home/bill/Desktop/thesis/logfiles/" + source + "_" + city + "_matched_imgs.txt"
+    last_searched_id = logging_functions.get_last_id_from_logfile(logfile)
+    imgs = postgis_functions.get_photos_from_db("gt_gsv_ams_matched", last_searched_id)
+    count=0
+    for row in imgs:
+        logging_functions.log_last_searched_point(logfile, row["rn"])
+        print(row["rn"])
+        # remove row from dict
+        row.pop("rn", None)
+        count+=1
+        print "COUNT = " + str(count)
+        # load the test image
+        # img_url = 'http://places.csail.mit.edu/demo/6.jpg'
+        # os.system('wget %s -q -O test.jpg' % img_url)
+        img_path = row["path"]
+        img = Image.open(img_path)
+        input_img = V(tf(img).unsqueeze(0))
+
+        # forward pass
+        logit = model.forward(input_img)
+        h_x = F.softmax(logit, 1).data.squeeze()
+        probs, idx = h_x.sort(0, True)
+        probs = probs.numpy()
+        idx = idx.numpy()
+
+        print('RESULT ON ' + img_path + "\n")
+
+        # output the IO prediction
+        io_image = np.mean(labels_IO[idx[:10]]) # vote for the indoor or outdoor
+        if io_image < 0.5:
+            type_of_environment = "indoor"
+            #print('--TYPE OF ENVIRONMENT: indoor')
+        else:
+            type_of_environment = "outdoor"
+            #print('--TYPE OF ENVIRONMENT: outdoor')
+
+        # # output the prediction ofprint(top_scenes)scene category
+        # print('--SCENE CATEGORIES:')
+        top_scenes = []
+        for i in range(0, 5):
+            top_scenes.append((probs[i], classes[idx[i]]))
+        #     print('{:.3f} -> {}'.format(probs[i], classes[idx[i]]))
+        # # output the scene attributes
+        responses_attribute = W_attribute.dot(features_blobs[1])
+        idx_a = np.argsort(responses_attribute)
+        # print('--SCENE ATTRIBUTES:')
+        # print(', '.join([labels_attribute[idx_a[i]] for i in range(-1,-10,-1)]))
+        scene_attr = [labels_attribute[idx_a[i]] for i in range(-1,-10,-1)]
+        #print(row)
+        row["typeofenvironment"] = type_of_environment
+        for i in range(4):
+            row["scene" + str(i+1)] = top_scenes[i][1]
+            row["scene" + str(i+1) + "prob"] = float(top_scenes[i][0])
+
+        for i in range(9):
+            row["sceneattr" + str(i+1)] = scene_attr[i]
+        try:
+            session.add(
+                STable(**row))
+            session.commit()
+            print(row["placesid"], " INSERTED!")
+        except Exception as err:
+            session.rollback()
+            print("# NOT INSERTED: ", err)
+        # print(type_of_environment)
+        # print(top_scenes)
+        # print(scene_attr)
 
 
 
-# load the labels
-classes, labels_IO, labels_attribute, W_attribute = load_labels()
+    # generate class activation mapping
+    #print('Class activation map is saved as cam.jpg')
+    #CAMs = returnCAM(features_blobs[0], weight_softmax, [idx[0]])
 
-# load the model/home/bill
-features_blobs = []
-model = load_model()
-
-# load the transformer
-tf = returnTF() # image transformer
-
-# get the softmax weight
-params = list(model.parameters())
-weight_softmax = params[-2].data.numpy()
-weight_softmax[weight_softmax<0] = 0
-
-
-# Code has been EDITED from this point on
-
-session, STable = pois_storing_functions.setup_db("scene_features_ams_places",
-                                                          "notused", "scene_features")
-imgs = get_photos_from_db()
-count=0
-for row in imgs:
-    count+=1
-    print("LOOP = ", count)
-    # load the test image
-    # img_url = 'http://places.csail.mit.edu/demo/6.jpg'
-    # os.system('wget %s -q -O test.jpg' % img_url)
-    img_path = row["path"]
-    img = Image.open(img_path)
-    input_img = V(tf(img).unsqueeze(0))
-
-    # forward pass
-    logit = model.forward(input_img)
-    h_x = F.softmax(logit, 1).data.squeeze()
-    probs, idx = h_x.sort(0, True)
-    probs = probs.numpy()
-    idx = idx.numpy()
-
-    print('RESULT ON ' + img_path + "\n")
-
-    # output the IO prediction
-    io_image = np.mean(labels_IO[idx[:10]]) # vote for the indoor or outdoor
-    if io_image < 0.5:
-        type_of_environment = "indoor"
-        #print('--TYPE OF ENVIRONMENT: indoor')
-    else:
-        type_of_environment = "outdoor"
-        #print('--TYPE OF ENVIRONMENT: outdoor')
-
-    # # output the prediction ofprint(top_scenes)scene category
-    # print('--SCENE CATEGORIES:')
-    top_scenes = []
-    for i in range(0, 5):
-        top_scenes.append((probs[i], classes[idx[i]]))
-    #     print('{:.3f} -> {}'.format(probs[i], classes[idx[i]]))
-    # # output the scene attributes
-    responses_attribute = W_attribute.dot(features_blobs[1])
-    idx_a = np.argsort(responses_attribute)
-    # print('--SCENE ATTRIBUTES:')
-    # print(', '.join([labels_attribute[idx_a[i]] for i in range(-1,-10,-1)]))
-    scene_attr = [labels_attribute[idx_a[i]] for i in range(-1,-10,-1)]
-    #print(row)
-    row["typeofenvironment"] = type_of_environment
-    for i in range(4):
-        row["scene" + str(i+1)] = top_scenes[i][1]
-        row["scene" + str(i+1) + "prob"] = float(top_scenes[i][0])
-
-    for i in range(9):
-        row["sceneattr" + str(i+1)] = scene_attr[i]
-    try:
-        session.add(
-            STable(**row))
-        session.commit()
-        print(row["path"], " INSERTED!")
-    except Exception as err:
-        session.rollback()
-        print("# NOT INSERTED: ", err)
-    print(type_of_environment)
-    print(top_scenes)
-    print(scene_attr)
-
-
-
-# generate class activation mapping
-#print('Class activation map is saved as cam.jpg')
-#CAMs = returnCAM(features_blobs[0], weight_softmax, [idx[0]])
-
-# render the CAM and output
-# img = cv2.imread('test.jpg')
-# height, width, _ = img.shape
-# heatmap = cv2.applyColorMap(cv2.resize(CAMs[0],(width, height)), cv2.COLORMAP_JET)
-# result = heatmap * 0.4 + img * 0.5
-# cv2.imwrite('cam.jpg', result)
+    # render the CAM and output
+    # img = cv2.imread('test.jpg')
+    # height, width, _ = img.shape
+    # heatmap = cv2.applyColorMap(cv2.resize(CAMs[0],(width, height)), cv2.COLORMAP_JET)
+    # result = heatmap * 0.4 + img * 0.5
+    # cv2.imwrite('cam.jpg', result)
