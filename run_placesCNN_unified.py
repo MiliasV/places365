@@ -137,18 +137,18 @@ if __name__ == '__main__':
     weight_softmax = params[-2].data.numpy()
     weight_softmax[weight_softmax<0] = 0
     # Code has been EDITED from this point on
-    session, STable = pois_storing_functions.setup_db("gt_scene_features_ams_matched",
+    session, STable = pois_storing_functions.setup_db("matched_scene_features_ams2",
                                                               "notused", "scene_features")
     # GET images
-    logfile = "/home/bill/Desktop/thesis/logfiles/" + source + "_" + city + "_matched_imgs.txt"
+    logfile = "/home/bill/Desktop/thesis/logfiles/" + source + "_" + city + "_scene_features.txt"
     last_searched_id = logging_functions.get_last_id_from_logfile(logfile)
-    imgs = postgis_functions.get_photos_from_db("gt_gsv_ams_matched", last_searched_id)
+    imgs = postgis_functions.get_photos_from_db("matched_gsv_ams", last_searched_id)
     count=0
     for row in imgs:
-        logging_functions.log_last_searched_point(logfile, row["rn"])
-        print(row["rn"])
+        logging_functions.log_last_searched_point(logfile, row["point"])
+        print(row["point"])
         # remove row from dict
-        row.pop("rn", None)
+        #row.pop("rn", None)
         count+=1
         print "COUNT = " + str(count)
         # load the test image
@@ -196,6 +196,12 @@ if __name__ == '__main__':
 
         for i in range(9):
             row["sceneattr" + str(i+1)] = scene_attr[i]
+        gpoint = postgis_functions.get_matchid_by_id("matched_google_ams", row["placesid"])
+        # find matched fsq place
+        fplace = postgis_functions.get_matched_poi("matched_fsq_ams", gpoint)
+        # get type of place
+        ftype = postgis_functions.get_type_of_place(fplace)
+        row["type"] = ftype
         try:
             session.add(
                 STable(**row))
