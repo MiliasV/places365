@@ -143,6 +143,8 @@ if __name__ == '__main__':
     logfile = "/home/bill/Desktop/thesis/logfiles/" + source + "_" + city + "_scene_features.txt"
     last_searched_id = logging_functions.get_last_id_from_logfile(logfile)
     imgs = postgis_functions.get_photos_from_db("matched_gsv_ams", last_searched_id)
+    #placesids = postgis_functions.get_id_not_in_table(table_source, table_target)
+    #imgs = postgis_functions.get_row_by_id("mat")
     count=0
     for row in imgs:
         logging_functions.log_last_searched_point(logfile, row["point"])
@@ -150,7 +152,7 @@ if __name__ == '__main__':
         # remove row from dict
         #row.pop("rn", None)
         count+=1
-        print "COUNT = " + str(count)
+        print ("COUNT = " + str(count))
         # load the test image
         # img_url = 'http://places.csail.mit.edu/demo/6.jpg'
         # os.system('wget %s -q -O test.jpg' % img_url)
